@@ -1,7 +1,9 @@
 from MEGABYTE_pytorch import MEGABYTE
 
+import io
 import os
 import sys
+import re
 import random
 import tqdm
 import gzip
@@ -10,6 +12,7 @@ import torch
 import torch.optim as optim
 from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
+from datasets import load_dataset
 
 # constants
 
@@ -63,15 +66,13 @@ model = MEGABYTE(
 ).cuda()
 
 # prepare data
-from datasets import load_dataset
-import io
 split = "train"
 dataset = load_dataset("pg19")
 
 class TextSamplerDataset(Dataset):
     def __init__(self, data, seq_len, zipped=False):
         super().__init__()
-        self.zip_multiplier = 8 if zipped else 1
+        self.zip_multiplier = 8 if zipped else 2
         self.data = data
         self.seq_len = seq_len
         self.doc_lengths = np.array([len(doc["text"]) for doc in data])
@@ -84,14 +85,14 @@ class TextSamplerDataset(Dataset):
         # sample a longer piece of text if we are zipping
         text_seq_len = self.seq_len * self.zip_multiplier
         rand_start = torch.randint(0, len(text) - text_seq_len, (1,))
-        bytes = text[rand_start: rand_start + text_seq_len].encode("utf-8")
+        bytes = re.sub(r'[^\x00-\x7F]+', ' ', text[rand_start: rand_start + text_seq_len]).encode("ascii")
         if self.zipped:
             buffer = io.BytesIO()
             with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
                 f.write(bytes)
             bytes = buffer.getvalue()
-            if len(bytes) < self.seq_len:
-                return self[index]
+        if len(bytes) < self.seq_len:
+            return self[index]
         full_seq = torch.LongTensor(np.frombuffer(bytes[:self.seq_len], dtype=np.uint8).copy())
         return full_seq.cuda()
 

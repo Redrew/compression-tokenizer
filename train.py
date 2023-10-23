@@ -14,7 +14,7 @@ from torch.utils.data import DataLoader, Dataset
 # constants
 
 EXP_NAME = sys.argv[1]
-ZIPPED = False
+ZIPPED = True
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 16
 GRADIENT_ACCUMULATE_EVERY = 1
@@ -45,7 +45,8 @@ class Logger(object):
         self.log = open(f, "w")
     def write(self, message):
         self.terminal.write(message)
-        self.log.write(message)  
+        self.log.write(message)
+        self.log.flush()
     def flush(self):
         pass
 os.makedirs(f"outputs/{EXP_NAME}", exist_ok=True)
@@ -70,7 +71,7 @@ dataset = load_dataset("pg19")
 class TextSamplerDataset(Dataset):
     def __init__(self, data, seq_len, zipped=False):
         super().__init__()
-        self.zip_multiplier = 4 if zipped else 1
+        self.zip_multiplier = 8 if zipped else 1
         self.data = data
         self.seq_len = seq_len
         self.doc_lengths = np.array([len(doc["text"]) for doc in data])
@@ -89,7 +90,8 @@ class TextSamplerDataset(Dataset):
             with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
                 f.write(bytes)
             bytes = buffer.getvalue()
-            assert len(bytes) >= self.seq_len, f"zipped data too small {len(bytes)}"
+            if len(bytes) < self.seq_len:
+                return self[index]
         full_seq = torch.LongTensor(np.frombuffer(bytes[:self.seq_len], dtype=np.uint8).copy())
         return full_seq.cuda()
 

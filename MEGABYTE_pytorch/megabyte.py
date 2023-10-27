@@ -317,7 +317,9 @@ class MEGABYTE(nn.Module):
 
         return self.to_logits(tokens)
 
-    def forward(self, ids, return_loss = False):
+    def forward(self, ids = None, return_loss = False):
+        if ids is None:
+            return torch.zeros(1, device=next(self.parameters()).device)
         batch = ids.shape[0]
 
         assert ids.ndim in {2, self.stages + 1}

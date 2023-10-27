@@ -17,7 +17,7 @@ from datasets import load_dataset
 # constants
 
 EXP_NAME = sys.argv[1]
-ZIPPED = True
+ZIPPED = "zipped" in EXP_NAME
 NUM_BATCHES = int(1e5)
 BATCH_SIZE = 16
 GRADIENT_ACCUMULATE_EVERY = 1
@@ -150,5 +150,6 @@ for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
 
         output_str = decode_tokens(sample[0][PRIME_LEN:])
         print(output_str)
+        torch.save(model, f"outputs/{EXP_NAME}/model-latest.pt")
 
 torch.save(model, f"outputs/{EXP_NAME}/model.pt")

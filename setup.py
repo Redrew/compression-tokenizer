@@ -19,7 +19,9 @@ setup(
     'beartype',
     'einops>=0.6.1',
     'torch>=1.10',
-    'tqdm'
+    'tqdm',
+    'evaluate',
+    'datasets'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',

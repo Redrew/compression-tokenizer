@@ -14,20 +14,6 @@ from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from datasets import load_dataset
 
-# constants
-
-EXP_NAME = sys.argv[1]
-ZIPPED = "zipped" in EXP_NAME
-NUM_BATCHES = int(1e5)
-BATCH_SIZE = 16
-GRADIENT_ACCUMULATE_EVERY = 1
-LEARNING_RATE = 2e-4
-VALIDATE_EVERY  = 100
-GENERATE_EVERY  = 500
-PRIME_LEN = 100
-SEQ_LEN = 8192
-ENABLE_DP = True
-
 # helpers
 
 def cycle(loader):
@@ -52,22 +38,6 @@ class Logger(object):
         self.log.flush()
     def flush(self):
         pass
-os.makedirs(f"outputs/{EXP_NAME}", exist_ok=True)
-sys.stdout = Logger(f"outputs/{EXP_NAME}/log.txt")
-
-# instantiate GPT-like decoder model
-
-model = MEGABYTE(
-    num_tokens = 256,
-    dim = (768, 512, 256),
-    depth = (6, 4, 2),
-    max_seq_len = (512, 4, 4),
-    flash_attn = True
-).cuda()
-
-# prepare data
-split = "train"
-dataset = load_dataset("pg19")
 
 class TextSamplerDataset(Dataset):
     def __init__(self, data, seq_len, zipped=False):
@@ -99,57 +69,89 @@ class TextSamplerDataset(Dataset):
     def __len__(self):
         return self.doc_lengths.sum() // self.seq_len
 
-train_dataset = TextSamplerDataset(dataset["train"], SEQ_LEN, zipped=ZIPPED)
-val_dataset   = TextSamplerDataset(dataset["validation"], SEQ_LEN, zipped=ZIPPED)
-train_loader  = cycle(DataLoader(train_dataset, batch_size = BATCH_SIZE))
-val_loader    = cycle(DataLoader(val_dataset, batch_size = BATCH_SIZE))
+if __name__ == "__main__":
+    # constants
 
-# optimizer
+    EXP_NAME = sys.argv[1]
+    ZIPPED = "zipped" in EXP_NAME
+    NUM_BATCHES = int(1e5)
+    BATCH_SIZE = 16
+    GRADIENT_ACCUMULATE_EVERY = 1
+    LEARNING_RATE = 2e-4
+    VALIDATE_EVERY  = 100
+    GENERATE_EVERY  = 500
+    PRIME_LEN = 100
+    SEQ_LEN = 8192
+    ENABLE_DP = True
 
-optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    os.makedirs(f"outputs/{EXP_NAME}", exist_ok=True)
+    sys.stdout = Logger(f"outputs/{EXP_NAME}/log.txt")
 
-# multi-gpu training
-if ENABLE_DP:
-    devices = list(range(torch.cuda.device_count()))
-    model = torch.nn.DataParallel(model, device_ids=devices)
-    model.generate = model.module.generate
+    # instantiate GPT-like decoder model
 
-# training
+    model = MEGABYTE(
+        num_tokens = 256,
+        dim = (768, 512, 256),
+        depth = (6, 4, 2),
+        max_seq_len = (512, 4, 4),
+        flash_attn = True
+    ).cuda()
 
-for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
-    model.train()
+    # prepare data
+    split = "train"
+    dataset = load_dataset("pg19")
 
-    for __ in range(GRADIENT_ACCUMULATE_EVERY):
-        loss = model(next(train_loader), return_loss = True)
-        if ENABLE_DP:
-            loss = loss.mean()
-        loss.backward()
+    train_dataset = TextSamplerDataset(dataset["train"], SEQ_LEN, zipped=ZIPPED)
+    val_dataset   = TextSamplerDataset(dataset["validation"], SEQ_LEN, zipped=ZIPPED)
+    train_loader  = cycle(DataLoader(train_dataset, batch_size = BATCH_SIZE))
+    val_loader    = cycle(DataLoader(val_dataset, batch_size = BATCH_SIZE))
 
-    print(f'training loss: {loss.item()}')
-    torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
-    optim.step()
-    optim.zero_grad()
+    # optimizer
 
-    if i % VALIDATE_EVERY == 0:
-        model.eval()
-        with torch.no_grad():
-            loss = model(next(val_loader), return_loss = True)
+    optim = torch.optim.Adam(model.parameters(), lr=LEARNING_RATE)
+
+    # multi-gpu training
+    if ENABLE_DP:
+        devices = list(range(torch.cuda.device_count()))
+        model = torch.nn.DataParallel(model, device_ids=devices)
+        model.generate = model.module.generate
+
+    # training
+
+    for i in tqdm.tqdm(range(NUM_BATCHES), mininterval=10., desc='training'):
+        model.train()
+
+        for __ in range(GRADIENT_ACCUMULATE_EVERY):
+            loss = model(next(train_loader), return_loss = True)
             if ENABLE_DP:
                 loss = loss.mean()
-            print(f'validation loss: {loss.item()}')
+            loss.backward()
 
-    if i != 0 and i % GENERATE_EVERY == 0:
-        model.eval()
-        inp = random.choice(val_dataset)[:-1]
-        prime_inp = inp[:PRIME_LEN]
-        prime = decode_tokens(prime_inp)
-        print(f'%s \n\n %s', (prime, '*' * 100))
+        print(f'training loss: {loss.item()}')
+        torch.nn.utils.clip_grad_norm_(model.parameters(), 0.5)
+        optim.step()
+        optim.zero_grad()
 
-        sample = model.generate(prime_inp[None, :])
-        sample = sample.flatten(1)
+        if i % VALIDATE_EVERY == 0:
+            model.eval()
+            with torch.no_grad():
+                loss = model(next(val_loader), return_loss = True)
+                if ENABLE_DP:
+                    loss = loss.mean()
+                print(f'validation loss: {loss.item()}')
 
-        output_str = decode_tokens(sample[0][PRIME_LEN:])
-        print(output_str)
-        torch.save(model, f"outputs/{EXP_NAME}/model-latest.pt")
+        if i != 0 and i % GENERATE_EVERY == 0:
+            model.eval()
+            inp = random.choice(val_dataset)[:-1]
+            prime_inp = inp[:PRIME_LEN]
+            prime = decode_tokens(prime_inp)
+            print(f'%s \n\n %s', (prime, '*' * 100))
 
-torch.save(model, f"outputs/{EXP_NAME}/model.pt")
+            sample = model.generate(prime_inp[None, :])
+            sample = sample.flatten(1)
+
+            output_str = decode_tokens(sample[0][PRIME_LEN:])
+            print(output_str)
+            torch.save(model, f"outputs/{EXP_NAME}/model-latest.pt")
+
+    torch.save(model, f"outputs/{EXP_NAME}/model.pt")

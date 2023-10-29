@@ -504,8 +504,7 @@ class _GzipReader(_compression.DecompressReader):
             if uncompress != b"":
                 break
             if buf == b"":
-                raise EOFError("Compressed file ended before the "
-                               "end-of-stream marker was reached")
+                break # end even if we haven't reached the end-of-stream marker
 
         self._add_read_data( uncompress )
         self._pos += len(uncompress)
@@ -521,11 +520,7 @@ class _GzipReader(_compression.DecompressReader):
         # uncompressed data matches the stored values.  Note that the size
         # stored is the true file size mod 2**32.
         crc32, isize = struct.unpack("<II", self._read_exact(8))
-        if crc32 != self._crc:
-            raise BadGzipFile("CRC check failed %s != %s" % (hex(crc32),
-                                                             hex(self._crc)))
-        elif isize != (self._stream_size & 0xffffffff):
-            raise BadGzipFile("Incorrect length of data produced")
+        # ignore even if crc and stream length checks fail
 
         # Gzip files can be padded with zeroes and still have archives.
         # Consume all zero bytes and set the file position to the first

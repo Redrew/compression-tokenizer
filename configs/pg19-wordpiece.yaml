@@ -1,0 +1,11 @@
+exp_name: pg19-wordpiece
+dataset: pg19
+tokenizer: wordpiece # options are 'bpe' and 'wordpiece' and 'bytes' and 'gzip'
+num_batches: 100000
+batch_size: 16
+gradient_accumulate_every: 1
+learning_rate: 2e-4
+seq_len: 2048
+enable_dp: true
+num_tokens: 30522
+zip_multiplier: 8

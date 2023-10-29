@@ -12,7 +12,7 @@ import torch.optim as optim
 from torch.utils.data import DataLoader, Dataset
 from omegaconf import OmegaConf
 from datasets import load_dataset
-from transformers import GPT2Tokenizer
+from transformers import GPT2Tokenizer, BertTokenizer
 
 # helpers
 def cycle(loader):
@@ -34,6 +34,9 @@ def decode_tokens(tokens, tokenizer="bytes"):
     elif tokenizer == "bpe":
         bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         return bpe_tokenizer.decode(tokens)
+    elif tokenizer == "wordpiece":
+        word_piece_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        return word_piece_tokenizer.decode(tokens)
 
 # logging
 class Logger(object):
@@ -58,6 +61,8 @@ class TextSamplerDataset(Dataset):
         self.tokenizer = tokenizer
         if self.tokenizer == "bpe":
             self.bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        if self.tokenizer == "wordpiece":
+            self.word_piece_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
 
     def __getitem__(self, index):
         rand_doc = np.random.choice(len(self.doc_lengths), p=self.doc_lengths/self.doc_lengths.sum())
@@ -75,6 +80,8 @@ class TextSamplerDataset(Dataset):
             token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
         elif self.tokenizer == "bpe":
             token_ids = self.bpe_tokenizer.encode(text_slice)
+        elif self.tokenizer == "wordpiece":
+            token_ids = self.word_piece_tokenizer.encode(text_slice)
         
         if len(token_ids) < self.seq_len:
             return self[index]

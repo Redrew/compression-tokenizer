@@ -1,16 +1,14 @@
+import relaxed_gzip as rgzip
 from MEGABYTE_pytorch import MEGABYTE
 
-import io
 import os
 import sys
 import re
 import random
 import tqdm
-import gzip
 import numpy as np
 import torch
 import torch.optim as optim
-from torch.nn import functional as F
 from torch.utils.data import DataLoader, Dataset
 from omegaconf import OmegaConf
 from datasets import load_dataset
@@ -22,11 +20,20 @@ def cycle(loader):
         for data in loader:
             yield data
 
-def decode_token(token):
-    return str(chr(max(32, token)))
-
-def decode_tokens(tokens):
-    return ''.join(list(map(decode_token, tokens)))
+def decode_tokens(tokens, tokenizer="bytes"):
+    if tokenizer == "bytes":
+        return ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))
+    elif tokenizer == "gzip":
+        bytes = np.array(tokens, dtype=np.uint8).tobytes()
+        assert np.all(np.frombuffer(bytes, dtype=np.uint8) == np.array(tokens, dtype=np.uint8)), "int to byte string does not match byte string to int conversion"
+        try:
+            decoding = rgzip.decompress(bytes).decode("ascii")
+        except:
+            decoding = ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))
+        return decoding
+    elif tokenizer == "bpe":
+        bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+        return bpe_tokenizer.decode(tokens)
 
 # logging
 class Logger(object):
@@ -50,7 +57,7 @@ class TextSamplerDataset(Dataset):
         self.doc_lengths[self.doc_lengths <= self.seq_len * self.zip_multiplier] = 0
         self.tokenizer = tokenizer
         if self.tokenizer == "bpe":
-            self.gpt_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
+            self.bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
 
     def __getitem__(self, index):
         rand_doc = np.random.choice(len(self.doc_lengths), p=self.doc_lengths/self.doc_lengths.sum())
@@ -64,13 +71,10 @@ class TextSamplerDataset(Dataset):
             token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
         elif self.tokenizer == "gzip":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
-            buffer = io.BytesIO()
-            with gzip.GzipFile(fileobj=buffer, mode='wb') as f:
-                f.write(bytes)
-            bytes = buffer.getvalue()
+            bytes = rgzip.compress(bytes)
             token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
         elif self.tokenizer == "bpe":
-            token_ids = self.gpt_tokenizer.encode(text_slice)
+            token_ids = self.bpe_tokenizer.encode(text_slice)
         
         if len(token_ids) < self.seq_len:
             return self[index]
@@ -101,7 +105,7 @@ if __name__ == "__main__":
     ).cuda()
 
     # prepare data
-    dataset = load_dataset("pg19")
+    dataset = load_dataset(config.dataset)
 
     train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
     val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
@@ -146,13 +150,13 @@ if __name__ == "__main__":
             model.eval()
             inp = random.choice(val_dataset)[:-1]
             prime_inp = inp[:PRIME_LEN]
-            prime = decode_tokens(prime_inp)
+            prime = decode_tokens(prime_inp.cpu(), config.tokenizer)
             print(f'%s \n\n %s', (prime, '*' * 100))
 
             sample = model.generate(prime_inp[None, :])
             sample = sample.flatten(1)
 
-            output_str = decode_tokens(sample[0][PRIME_LEN:])
+            output_str = decode_tokens(sample[0].cpu(), config.tokenizer)[len(prime):]
             print(output_str)
             torch.save(model, f"outputs/{config.exp_name}/model-latest.pt")
 

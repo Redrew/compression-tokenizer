@@ -1,4 +1,5 @@
 exp_name: pg19-bytes
+dataset: pg19
 tokenizer: bytes # options are 'bpe' and 'bytes' and 'gzip'
 num_batches: 100000
 batch_size: 16

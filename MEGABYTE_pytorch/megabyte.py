@@ -281,13 +281,13 @@ class MEGABYTE(nn.Module):
 
         self.to_logits = nn.Linear(fine_dim, num_tokens)
         self.pad_id = pad_id
+        self.device = "cuda"
 
     def generate(self, prime = None, filter_thres = 0.9, temperature = 1., default_batch_size = 1):
         total_seq_len = reduce_mult(self.max_seq_len)
-        device = next(self.parameters()).device
 
         if not exists(prime):
-            prime = torch.empty((default_batch_size, 0), dtype = torch.long, device = device)
+            prime = torch.empty((default_batch_size, 0), dtype = torch.long, device = self.device)
 
         seq = prime
         batch = seq.shape[0]
@@ -319,7 +319,7 @@ class MEGABYTE(nn.Module):
 
     def forward(self, ids = None, return_loss = False):
         if ids is None:
-            return torch.zeros(1, device=next(self.parameters()).device)
+            return torch.zeros(1, device=self.device)
         batch = ids.shape[0]
 
         assert ids.ndim in {2, self.stages + 1}

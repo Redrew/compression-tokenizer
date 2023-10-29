@@ -21,7 +21,9 @@ setup(
     'torch>=1.10',
     'tqdm',
     'evaluate',
-    'datasets'
+    'datasets',
+    'transformers',
+    'omegaconf'
   ],
   classifiers=[
     'Development Status :: 4 - Beta',

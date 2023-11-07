@@ -86,7 +86,7 @@ class MNISTDataset(Dataset):
             image = np.array(row["image"]).flatten()
             
             if tokenizer == "rle":
-                encoded_bytes = rle(image) 
+                encoded_bytes = RLE(image) 
                 encoded_bytes += [0] * (784 - len(encoded_bytes))
                 image = np.array(encoded_bytes, dtype=np.uint8).copy()
             self.data.append(image)
@@ -133,7 +133,7 @@ class TextSamplerDataset(Dataset):
             token_ids = self.word_piece_tokenizer.encode(text_slice)
         elif self.tokenizer == "rle":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
-            encoded_bytes = rle(bytes)
+            encoded_bytes = RLE(bytes)
             token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
         
         if len(token_ids) < self.seq_len:

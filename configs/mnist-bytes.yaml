@@ -1,0 +1,11 @@
+exp_name: mnist-bytes
+dataset: mnist
+tokenizer: bytes # options are 'bpe' and 'bytes' and 'gzip'
+num_batches: 100000
+batch_size: 16
+gradient_accumulate_every: 1
+learning_rate: 2e-4
+seq_len: 2048
+enable_dp: true
+num_tokens: 50257
+zip_multiplier: 8

@@ -20,7 +20,7 @@ def cycle(loader):
         for data in loader:
             yield data
 
-def rle(seq):
+def RLE(seq):
     ret_seq = []
     i = 0
     while i < len(seq):

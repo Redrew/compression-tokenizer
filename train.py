@@ -51,7 +51,7 @@ def decode_tokens(tokens, tokenizer="bytes"):
         final_bytes = []
         for i in range(0, len(tokens), 2):
             final_bytes.extend([tokens[i]] * tokens[i+1])
-            
+
         return ''.join(list(map(lambda token: str(chr(max(32, token))), final_bytes)))
 
 # logging
@@ -65,6 +65,20 @@ class Logger(object):
         self.log.flush()
     def flush(self):
         pass
+
+class MNISTDataset(Dataset):
+    def __init__(self, dataset):
+        super().__init__()
+        self.data = []
+        for row in dataset:
+            image = np.array(row["image"])
+            self.data.append(image.flatten())
+
+    def __getitem__(self, index):
+        return torch.LongTensor(self.data[index]).cuda()
+    
+    def __len__(self):
+        return len(self.data)
 
 class TextSamplerDataset(Dataset):
     def __init__(self, data, seq_len, tokenizer="bytes", zip_multiplier=2):
@@ -118,6 +132,8 @@ if __name__ == "__main__":
     PRIME_LEN = 100
     config = OmegaConf.load(sys.argv[1])
 
+    assert config.dataset in ["pg-19", "mnist"]
+
     os.makedirs(f"outputs/{config.exp_name}", exist_ok=True)
     sys.stdout = Logger(f"outputs/{config.exp_name}/log.txt")
 
@@ -129,16 +145,21 @@ if __name__ == "__main__":
         depth = (6, 4, 2),
         max_seq_len = (512, 4, 4),
         flash_attn = True
-    ).cuda()
+    )# .cuda()
 
-    # prepare data
+    # prepare dataset
     dataset = load_dataset(config.dataset)
 
-    train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
-    val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
-    train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
-    val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
-
+    if config.dataset == "pg-19":
+        train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
+        val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
+        train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
+        val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
+    else:
+        train_dataset = MNISTDataset(dataset["train"])
+        val_dataset   = MNISTDataset(dataset["test"])
+        train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
+        val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
     # optimizer
 
     optim = torch.optim.Adam(model.parameters(), lr=config.learning_rate)

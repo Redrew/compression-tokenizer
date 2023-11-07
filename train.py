@@ -31,6 +31,15 @@ def rle(seq):
         i = j
     return ret_seq
 
+def MTF(seq):
+    ret_seq = []
+    alphabet = list(range(256))
+    for token in seq:
+        ret_seq.append(alphabet.index(token))
+        alphabet.pop(alphabet.index(token))
+        alphabet.insert(0, token)
+    return ret_seq
+
 def decode_tokens(tokens, tokenizer="bytes"):
     if tokenizer == "bytes":
         return ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))

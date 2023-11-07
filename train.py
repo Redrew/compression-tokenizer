@@ -20,7 +20,7 @@ def cycle(loader):
         for data in loader:
             yield data
 
-def rle(seq):
+def RLE(seq):
     ret_seq = []
     i = 0
     while i < len(seq):
@@ -29,6 +29,15 @@ def rle(seq):
             j += 1
         ret_seq.extend([seq[i], j - i])
         i = j
+    return ret_seq
+
+def MTF(seq):
+    ret_seq = []
+    alphabet = list(range(256))
+    for token in seq:
+        ret_seq.append(alphabet.index(token))
+        alphabet.pop(alphabet.index(token))
+        alphabet.insert(0, token)
     return ret_seq
 
 def decode_tokens(tokens, tokenizer="bytes"):

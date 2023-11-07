@@ -25,7 +25,7 @@ def rle(seq):
     i = 0
     while i < len(seq):
         j = i + 1
-        while j < len(seq) and seq[j] == seq[i]:
+        while j - i < 255 and j < len(seq) and seq[j] == seq[i]:
             j += 1
         ret_seq.extend([seq[i], j - i])
         i = j
@@ -68,22 +68,31 @@ class Logger(object):
         pass
 
 class MNISTDataset(Dataset):
-    def __init__(self, dataset):
+    def __init__(self, dataset, tokenizer="bytes", device="cuda"):
         super().__init__()
+        self.device = device
+        self.tokenizer = tokenizer
         self.data = []
-        for row in dataset:
-            image = np.array(row["image"])
-            self.data.append(image.flatten())
+        for row in tqdm.tqdm(dataset):
+            image = np.array(row["image"]).flatten()
+            
+            if tokenizer == "rle":
+                encoded_bytes = rle(image) 
+                encoded_bytes += [0] * (784 - len(encoded_bytes))
+                image = np.array(encoded_bytes, dtype=np.uint8).copy()
+            self.data.append(image)
 
     def __getitem__(self, index):
-        return torch.LongTensor(self.data[index]).cuda()
-    
+        tokens = self.data[index]
+        return torch.LongTensor(tokens).to(self.device)
+
     def __len__(self):
         return len(self.data)
 
 class TextSamplerDataset(Dataset):
-    def __init__(self, data, seq_len, tokenizer="bytes", zip_multiplier=2):
+    def __init__(self, data, seq_len, tokenizer="bytes", zip_multiplier=2, device="cuda"):
         super().__init__()
+        self.device = device
         self.zip_multiplier = zip_multiplier
         self.data = data
         self.seq_len = seq_len
@@ -121,7 +130,7 @@ class TextSamplerDataset(Dataset):
         if len(token_ids) < self.seq_len:
             return self[index]
         full_seq = torch.LongTensor(token_ids[:self.seq_len])
-        return full_seq.cuda()
+        return full_seq.to(self.device)
 
     def __len__(self):
         return self.doc_lengths.sum() // self.seq_len
@@ -132,6 +141,7 @@ if __name__ == "__main__":
     GENERATE_EVERY = 500
     PRIME_LEN = 100
     config = OmegaConf.load(sys.argv[1])
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     assert config.dataset in ["pg-19", "mnist"]
 
@@ -146,21 +156,23 @@ if __name__ == "__main__":
         depth = (6, 4, 2),
         max_seq_len = (512, 4, 4),
         flash_attn = True
-    )# .cuda()
+    ).to(device)
 
     # prepare dataset
     dataset = load_dataset(config.dataset)
 
     if config.dataset == "pg-19":
-        train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
-        val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier)
+        train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device)
+        val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device)
         train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
         val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
     else:
-        train_dataset = MNISTDataset(dataset["train"])
-        val_dataset   = MNISTDataset(dataset["test"])
-        train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
-        val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
+        print("Loading MNIST dataset")
+        train_dataset = MNISTDataset(dataset["train"], tokenizer=config.tokenizer, device=device)
+        val_dataset   = MNISTDataset(dataset["test"], tokenizer=config.tokenizer, device=device)
+        train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size, shuffle=True))
+        val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size, shuffle=True))
+
     # optimizer
 
     optim = torch.optim.Adam(model.parameters(), lr=config.learning_rate)

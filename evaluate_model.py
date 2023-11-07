@@ -48,15 +48,16 @@ print(f"PPL per character: {perplexity_per_character}")
 
 # calculate bleu score
 if not SKIP_BLEU:
+    model = model.module
     model.max_seq_len = SAMPLE_LEN
     class GenerateWrapper(torch.nn.Module):
         def __init__(self, model):
             super().__init__()
             self.model = model
-        def forward(self, text):
-            return self.model.generate(text)
+        def forward(self, text, **kwargs):
+            return self.model.generate(text, **kwargs)
     devices = list(range(torch.cuda.device_count()))
-    model = torch.nn.DataParallel(GenerateWrapper(model.module), device_ids=devices)
+    model = torch.nn.DataParallel(GenerateWrapper(model), device_ids=devices)
     bleu = evaluate.load("bleu")
 
     text = next(val_loader)

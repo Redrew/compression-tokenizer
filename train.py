@@ -20,7 +20,7 @@ def cycle(loader):
         for data in loader:
             yield data
 
-def RLE(seq):
+def rle(seq):
     ret_seq = []
     i = 0
     while i < len(seq):
@@ -29,6 +29,7 @@ def RLE(seq):
             j += 1
         ret_seq.extend([seq[i], j - i])
         i = j
+    return ret_seq
 
 def decode_tokens(tokens, tokenizer="bytes"):
     if tokenizer == "bytes":
@@ -114,7 +115,7 @@ class TextSamplerDataset(Dataset):
             token_ids = self.word_piece_tokenizer.encode(text_slice)
         elif self.tokenizer == "rle":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
-            encoded_bytes = RLE(bytes)
+            encoded_bytes = rle(bytes)
             token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
         
         if len(token_ids) < self.seq_len:

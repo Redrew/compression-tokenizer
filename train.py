@@ -20,6 +20,16 @@ def cycle(loader):
         for data in loader:
             yield data
 
+def RLE(seq):
+    ret_seq = []
+    i = 0
+    while i < len(seq):
+        j = i + 1
+        while j < len(seq) and seq[j] == seq[i]:
+            j += 1
+        ret_seq.extend([seq[i], j - i])
+        i = j
+
 def decode_tokens(tokens, tokenizer="bytes"):
     if tokenizer == "bytes":
         return ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))
@@ -37,6 +47,12 @@ def decode_tokens(tokens, tokenizer="bytes"):
     elif tokenizer == "wordpiece":
         word_piece_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
         return word_piece_tokenizer.decode(tokens)
+    elif tokenizer == "rle":
+        final_bytes = []
+        for i in range(0, len(tokens), 2):
+            final_bytes.extend([tokens[i]] * tokens[i+1])
+            
+        return ''.join(list(map(lambda token: str(chr(max(32, token))), final_bytes)))
 
 # logging
 class Logger(object):
@@ -82,6 +98,10 @@ class TextSamplerDataset(Dataset):
             token_ids = self.bpe_tokenizer.encode(text_slice)
         elif self.tokenizer == "wordpiece":
             token_ids = self.word_piece_tokenizer.encode(text_slice)
+        elif self.tokenizer == "rle":
+            bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
+            encoded_bytes = RLE(bytes)
+            token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
         
         if len(token_ids) < self.seq_len:
             return self[index]

@@ -13,6 +13,8 @@ from torch.utils.data import DataLoader, Dataset
 from omegaconf import OmegaConf
 from datasets import load_dataset
 from transformers import GPT2Tokenizer, BertTokenizer
+from lz77 import LZ77Compressor
+from bwt import BBWT, BBWT_inv
 
 # helpers
 def cycle(loader):
@@ -61,8 +63,15 @@ def decode_tokens(tokens, tokenizer="bytes"):
         final_bytes = []
         for i in range(0, len(tokens), 2):
             final_bytes.extend([tokens[i]] * tokens[i+1])
-
         return ''.join(list(map(lambda token: str(chr(max(32, token))), final_bytes)))
+    elif tokenizer == "mtf-rle":
+        expanded_bytes = []
+        for i in range(0, len(tokens), 2):
+            expanded_bytes.extend([tokens[i]] * tokens[i+1])
+        text = ''.join(list(map(lambda token: str(chr(max(32, token))), expanded_bytes)))
+        return BBWT_inv(text)
+    else:
+        return ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))
 
 # logging
 class Logger(object):
@@ -106,7 +115,7 @@ class TextSamplerDataset(Dataset):
         self.data = data
         self.seq_len = seq_len
         self.doc_lengths = np.array([len(doc["text"]) for doc in data])
-        self.doc_lengths[self.doc_lengths <= self.seq_len * self.zip_multiplier] = 0
+        self.doc_lengths[self.doc_lengths <= int(self.seq_len * self.zip_multiplier)] = 0
         self.tokenizer = tokenizer
         if self.tokenizer == "bpe":
             self.bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
@@ -117,11 +126,15 @@ class TextSamplerDataset(Dataset):
         rand_doc = np.random.choice(len(self.doc_lengths), p=self.doc_lengths/self.doc_lengths.sum())
         text = self.data[rand_doc]["text"]
         # sample a longer piece of text if we are zipping
-        text_seq_len = self.seq_len * self.zip_multiplier
+        text_seq_len = int(self.seq_len * self.zip_multiplier)
         rand_start = torch.randint(0, len(text) - text_seq_len, (1,))
         text_slice = text[rand_start: rand_start + text_seq_len]
         if self.tokenizer == "bytes":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
+            token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
+        elif self.tokenizer == "lz77":
+            bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
+            bytes = LZ77Compressor(255).compress(bytes)
             token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
         elif self.tokenizer == "gzip":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
@@ -134,6 +147,14 @@ class TextSamplerDataset(Dataset):
         elif self.tokenizer == "rle":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
             encoded_bytes = RLE(bytes)
+            token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
+        elif self.tokenizer == "mtf-rle":
+            bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
+            encoded_bytes = RLE(MTF(bytes))
+            token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
+        elif self.tokenizer == "bwt-rle":
+            text = re.sub(r'[^\x00-\x7F]+', ' ', text_slice)
+            encoded_bytes = RLE(BBWT(text).encode("ascii"))
             token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
         
         if len(token_ids) < self.seq_len:
@@ -152,7 +173,7 @@ if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    assert config.dataset in ["pg-19", "mnist"]
+    assert config.dataset in ["pg19", "mnist"]
 
     os.makedirs(f"outputs/{config.exp_name}", exist_ok=True)
     sys.stdout = Logger(f"outputs/{config.exp_name}/log.txt")
@@ -170,12 +191,12 @@ if __name__ == "__main__":
     # prepare dataset
     dataset = load_dataset(config.dataset)
 
-    if config.dataset == "pg-19":
+    if config.dataset == "pg19":
         train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device)
         val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device)
         train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
         val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
-    else:
+    if config.dataset == "mnist":
         print("Loading MNIST dataset")
         train_dataset = MNISTDataset(dataset["train"], tokenizer=config.tokenizer, device=device)
         val_dataset   = MNISTDataset(dataset["test"], tokenizer=config.tokenizer, device=device)

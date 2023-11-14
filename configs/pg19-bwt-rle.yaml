@@ -1,0 +1,11 @@
+exp_name: pg19-bwt-rle
+dataset: pg19
+tokenizer: bwt-rle # options are 'bpe' and 'bytes' and 'gzip'
+num_batches: 100000
+batch_size: 16
+gradient_accumulate_every: 1
+learning_rate: 2e-4
+seq_len: 8192
+enable_dp: true
+num_tokens: 256
+zip_multiplier: 2

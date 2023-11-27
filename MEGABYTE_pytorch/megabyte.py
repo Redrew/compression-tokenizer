@@ -213,7 +213,8 @@ class MEGABYTE(nn.Module):
         pad_id = 0,
         rel_pos = False,
         pos_emb = False,
-        flash_attn = False
+        flash_attn = False,
+        sep_id = None,
     ):
         super().__init__()
 
@@ -281,6 +282,7 @@ class MEGABYTE(nn.Module):
 
         self.to_logits = nn.Linear(fine_dim, num_tokens)
         self.pad_id = pad_id
+        self.sep_id = sep_id
         self.device = "cuda"
 
     def generate(self, prime = None, filter_thres = 0.9, temperature = 1., default_batch_size = 1):
@@ -419,7 +421,9 @@ class MEGABYTE(nn.Module):
         logits = torch.cat((start_tokens, logits), dim = -2)
 
         preds = rearrange(logits, 'b n c -> b c n')
-        labels = rearrange(ids, 'b ... -> b (...)')
+        labels = rearrange(ids, 'b ... -> b (...)').clone()
+        for batch_i, index in zip(*torch.where(labels == self.sep_id)):
+            labels[batch_i, :index + 1] = self.pad_id
 
         loss = F.cross_entropy(
             preds[..., :-1],

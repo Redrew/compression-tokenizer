@@ -108,7 +108,7 @@ class MNISTDataset(Dataset):
         return len(self.data)
 
 class TextSamplerDataset(Dataset):
-    def __init__(self, data, seq_len, tokenizer="bytes", zip_multiplier=2, device="cuda"):
+    def __init__(self, data, seq_len, tokenizer="bytes", zip_multiplier=2, device="cuda", pad_id=-1, sep_id=-1):
         super().__init__()
         self.device = device
         self.zip_multiplier = zip_multiplier
@@ -121,6 +121,8 @@ class TextSamplerDataset(Dataset):
             self.bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         if self.tokenizer == "wordpiece":
             self.word_piece_tokenizer = BertTokenizer.from_pretrained('bert-base-uncased')
+        self.pad_id = pad_id
+        self.sep_id = sep_id
 
     def __getitem__(self, index):
         rand_doc = np.random.choice(len(self.doc_lengths), p=self.doc_lengths/self.doc_lengths.sum())
@@ -156,10 +158,20 @@ class TextSamplerDataset(Dataset):
             text = re.sub(r'[^\x00-\x7F]+', ' ', text_slice)
             encoded_bytes = RLE(BBWT(text).encode("ascii"))
             token_ids = np.array(encoded_bytes, dtype=np.uint8).copy()
+        elif self.tokenizer == "gzip-uncompression":
+            bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
+            encoded_bytes = rgzip.compress(bytes)
+            token_ids = np.concatenate([
+                np.frombuffer(encoded_bytes, dtype=np.uint8).copy().astype(np.uint16),
+                [self.sep_id],
+                np.frombuffer(bytes, dtype=np.uint8).copy().astype(np.uint16),
+            ])
         
-        if len(token_ids) < self.seq_len:
-            return self[index]
+        # if len(token_ids) < self.seq_len:
+        #     return self[index]
         full_seq = torch.LongTensor(token_ids[:self.seq_len])
+        if len(full_seq) < self.seq_len:
+            full_seq = torch.cat([full_seq, torch.LongTensor([self.pad_id] * (self.seq_len - len(full_seq)))])
         return full_seq.to(self.device)
 
     def __len__(self):
@@ -180,20 +192,24 @@ if __name__ == "__main__":
 
     # instantiate GPT-like decoder model
 
+    pad_id = config.num_tokens
+    sep_id = config.num_tokens - 1 if config.tokenizer == "gzip-uncompression" else None
     model = MEGABYTE(
-        num_tokens = config.num_tokens,
+        num_tokens = config.num_tokens + 1,
         dim = (768, 512, 256),
         depth = (6, 4, 2),
         max_seq_len = (512, 4, 4),
-        flash_attn = True
+        flash_attn = True,
+        pad_id = pad_id,
+        sep_id = sep_id,
     ).to(device)
 
     # prepare dataset
     dataset = load_dataset(config.dataset)
 
     if config.dataset == "pg19":
-        train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device)
-        val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device)
+        train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id)
+        val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id)
         train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
         val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
     if config.dataset == "mnist":

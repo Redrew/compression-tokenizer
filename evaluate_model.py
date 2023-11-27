@@ -13,11 +13,12 @@ from tqdm import tqdm
 from train import TextSamplerDataset, decode_tokens, cycle, Logger
 
 config = OmegaConf.load(sys.argv[1])
+SKIP_PPL = False
 SKIP_BLEU = False
 BATCH_SIZE = 16
 PRIME_LEN = 100
 NUM_BATCHES_FOR_PPL = 10
-SAMPLE_LEN = (128, 4, 4) # reduce sample length
+SAMPLE_LEN = (512, 4, 4) # reduce sample length
 
 # logging
 sys.stdout = Logger(f"outputs/{config.exp_name}/evaluation-log.txt")
@@ -26,25 +27,30 @@ sys.stdout = Logger(f"outputs/{config.exp_name}/evaluation-log.txt")
 model_path = f"outputs/{config.exp_name}/model-latest.pt"
 model = torch.load(model_path)
 dataset = load_dataset(config.dataset)
+pad_id = config.num_tokens
+sep_id = config.num_tokens - 1 if config.tokenizer == "gzip-uncompression" else None
 val_dataset = TextSamplerDataset(
     dataset["validation"],
     seq_len=config.seq_len,
     tokenizer=config.tokenizer,
-    zip_multiplier=config.zip_multiplier
+    zip_multiplier=config.zip_multiplier,
+    pad_id=pad_id,
+    sep_id=sep_id,
 )
 val_loader = cycle(DataLoader(val_dataset, batch_size = BATCH_SIZE))
 
 # calculate perplexity per character
-total_nll, total_characters = 0, 0
-for _ in tqdm(range(NUM_BATCHES_FOR_PPL)):
-    text = next(val_loader)
-    with torch.no_grad():
-        nll_per_token = model(text, return_loss=True).mean()
-    num_characters = sum(len(decode_tokens(line.cpu(), config.tokenizer)) for line in text)
-    total_nll += nll_per_token.cpu().item() * np.prod(text.shape)
-    total_characters += num_characters
-perplexity_per_character = np.exp(total_nll / total_characters)
-print(f"PPL per character: {perplexity_per_character}")
+if not SKIP_PPL:
+    total_nll, total_characters = 0, 0
+    for _ in tqdm(range(NUM_BATCHES_FOR_PPL)):
+        text = next(val_loader)
+        with torch.no_grad():
+            nll_per_token = model(text, return_loss=True).mean()
+        num_characters = sum(len(decode_tokens(line.cpu(), config.tokenizer)) for line in text)
+        total_nll += nll_per_token.cpu().item() * np.prod(text.shape)
+        total_characters += num_characters
+    perplexity_per_character = np.exp(total_nll / total_characters)
+    print(f"PPL per character: {perplexity_per_character}")
 
 # calculate bleu score
 if not SKIP_BLEU:
@@ -63,8 +69,12 @@ if not SKIP_BLEU:
     text = next(val_loader)
     text = text[:, :np.prod(SAMPLE_LEN)] # reduce length of reference text
     text = text[:, :-1]
-    sample = model(text[:, :PRIME_LEN]).flatten(1)
-    decode_tokens(sample[0].cpu(), config.tokenizer)
+    if sep_id is None:
+        sample = model(text[:, :PRIME_LEN]).flatten(1)
+    else:
+        text = text[:1]
+        PRIME_LEN = torch.where(text == sep_id)[1][0] + 1
+        sample = model(text[:, :PRIME_LEN]).flatten(1)
     prime_texts = [decode_tokens(line.cpu(), config.tokenizer) for line in text[:, :PRIME_LEN]]
     sampled_texts = [decode_tokens(line.cpu(), config.tokenizer)[len(prime):] for line, prime in zip(sample, prime_texts)]
     ref_texts = [decode_tokens(line.cpu(), config.tokenizer)[len(prime):] for line, prime in zip(text, prime_texts)]

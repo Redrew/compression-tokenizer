@@ -422,8 +422,9 @@ class MEGABYTE(nn.Module):
 
         preds = rearrange(logits, 'b n c -> b c n')
         labels = rearrange(ids, 'b ... -> b (...)').clone()
-        for batch_i, index in zip(*torch.where(labels == self.sep_id)):
-            labels[batch_i, :index + 1] = self.pad_id
+        if self.sep_id is not None:
+            for batch_i, index in zip(*torch.where(labels == self.sep_id)):
+                labels[batch_i, :index + 1] = self.pad_id
 
         loss = F.cross_entropy(
             preds[..., :-1],

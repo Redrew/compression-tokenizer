@@ -177,6 +177,26 @@ class TextSamplerDataset(Dataset):
     def __len__(self):
         return self.doc_lengths.sum() // self.seq_len
 
+class MixedDataset(Dataset):
+    def __init__(self, text_dataset, image_dataset, seq_len, pad_id):
+        super().__init__()
+        self.text_dataset = text_dataset
+        self.image_dataset = image_dataset
+        self.seq_len = seq_len
+        self.pad_id = pad_id
+
+    def __len__(self):
+        return len(self.text_dataset) + len(self.image_dataset)
+
+    def __getitem__(self, index):
+        if np.random.rand() < 0.50:
+            seq = self.text_dataset[np.random.randint(len(self.text_dataset))]
+        else:
+            seq = self.image_dataset[np.random.randint(len(self.image_dataset))]
+        if len(seq) < self.seq_len:
+            seq = torch.cat([seq, torch.LongTensor([self.pad_id] * (self.seq_len - len(seq))).to(seq.device)])
+        return seq
+
 if __name__ == "__main__":
     # config
     VALIDATE_EVERY = 100
@@ -185,7 +205,7 @@ if __name__ == "__main__":
     config = OmegaConf.load(sys.argv[1])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    assert config.dataset in ["pg19", "mnist"]
+    assert config.dataset in ["pg19", "mnist", "pg19-mnist"]
 
     os.makedirs(f"outputs/{config.exp_name}", exist_ok=True)
     sys.stdout = Logger(f"outputs/{config.exp_name}/log.txt")
@@ -205,19 +225,37 @@ if __name__ == "__main__":
     ).to(device)
 
     # prepare dataset
-    dataset = load_dataset(config.dataset)
-
     if config.dataset == "pg19":
+        dataset = load_dataset(config.dataset)
         train_dataset = TextSamplerDataset(dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id)
         val_dataset   = TextSamplerDataset(dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id)
         train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
         val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
     if config.dataset == "mnist":
+        dataset = load_dataset(config.dataset)
         print("Loading MNIST dataset")
         train_dataset = MNISTDataset(dataset["train"], tokenizer=config.tokenizer, device=device)
         val_dataset   = MNISTDataset(dataset["test"], tokenizer=config.tokenizer, device=device)
         train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size, shuffle=True))
         val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size, shuffle=True))
+    if config.dataset == "pg19-mnist":
+        print("Loading both PG19 and MNIST dataset")
+        text_dataset = load_dataset("pg19")
+        image_dataset = load_dataset("mnist")
+        train_dataset = MixedDataset(
+            TextSamplerDataset(text_dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id),
+            MNISTDataset(image_dataset["train"], tokenizer=config.tokenizer, device=device),
+            config.seq_len,
+            pad_id,
+        )
+        val_dataset   = MixedDataset(
+            TextSamplerDataset(text_dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id),
+            MNISTDataset(image_dataset["test"], tokenizer=config.tokenizer, device=device),
+            config.seq_len,
+            pad_id,
+        )
+        train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size))
+        val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size))
 
     # optimizer
 

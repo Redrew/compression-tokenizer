@@ -64,7 +64,7 @@ if not SKIP_BLEU:
             return self.model.generate(text, **kwargs)
     devices = list(range(torch.cuda.device_count()))
     model = torch.nn.DataParallel(GenerateWrapper(model), device_ids=devices)
-    bleu = evaluate.load("bleu")
+    bleu = evaluate.load("mauve")
 
     text = next(val_loader)
     text = text[:, :np.prod(SAMPLE_LEN)] # reduce length of reference text

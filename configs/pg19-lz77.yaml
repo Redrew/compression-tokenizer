@@ -8,4 +8,4 @@ learning_rate: 2e-4
 seq_len: 8192
 enable_dp: true
 num_tokens: 256
-zip_multiplier: 8
+zip_multiplier: 2

@@ -16,7 +16,7 @@ config = OmegaConf.load(sys.argv[1])
 SKIP_PPL = False
 SKIP_BLEU = False
 BATCH_SIZE = 16
-PRIME_LEN = 100
+PRIME_LEN = 1000
 NUM_BATCHES_FOR_PPL = 10
 SAMPLE_LEN = (512, 4, 4) # reduce sample length
 
@@ -29,6 +29,8 @@ model = torch.load(model_path)
 dataset = load_dataset(config.dataset)
 pad_id = config.num_tokens
 sep_id = config.num_tokens - 1 if config.tokenizer == "gzip-uncompression" else None
+if not hasattr(model.module, "sep_id"):
+    model.module.sep_id = None
 val_dataset = TextSamplerDataset(
     dataset["validation"],
     seq_len=config.seq_len,
@@ -64,7 +66,7 @@ if not SKIP_BLEU:
             return self.model.generate(text, **kwargs)
     devices = list(range(torch.cuda.device_count()))
     model = torch.nn.DataParallel(GenerateWrapper(model), device_ids=devices)
-    bleu = evaluate.load("bleu")
+    mauve = evaluate.load("mauve")
 
     text = next(val_loader)
     text = text[:, :np.prod(SAMPLE_LEN)] # reduce length of reference text
@@ -78,7 +80,7 @@ if not SKIP_BLEU:
     prime_texts = [decode_tokens(line.cpu(), config.tokenizer) for line in text[:, :PRIME_LEN]]
     sampled_texts = [decode_tokens(line.cpu(), config.tokenizer)[len(prime):] for line, prime in zip(sample, prime_texts)]
     ref_texts = [decode_tokens(line.cpu(), config.tokenizer)[len(prime):] for line, prime in zip(text, prime_texts)]
-    results = bleu.compute(predictions=sampled_texts, references=ref_texts)
+    results = mauve.compute(predictions=sampled_texts, references=ref_texts)
     print(results)
     for prime_text, ref_text, sampled_text in zip(prime_texts, ref_texts, sampled_texts):
         print(f"---{prime_text}---")

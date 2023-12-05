@@ -13,8 +13,8 @@ from torch.utils.data import DataLoader, Dataset
 from omegaconf import OmegaConf
 from datasets import load_dataset
 from transformers import GPT2Tokenizer, BertTokenizer
-from lz77 import LZ77Compressor
 from bwt import BBWT, BBWT_inv
+import fastlz
 
 # helpers
 def cycle(loader):
@@ -53,6 +53,13 @@ def decode_tokens(tokens, tokenizer="bytes"):
         except:
             decoding = ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))
         return decoding
+    elif tokenizer == "lz77":
+        bytes = np.array(tokens, dtype=np.uint8).tobytes()
+        try:
+            decoding = fastlz.decompress(bytes).decode("ascii")
+        except:
+            decoding = ''.join(list(map(lambda token: str(chr(max(32, token))), tokens)))
+        return decoding
     elif tokenizer == "bpe":
         bpe_tokenizer = GPT2Tokenizer.from_pretrained("gpt2")
         return bpe_tokenizer.decode(tokens)
@@ -86,7 +93,7 @@ class Logger(object):
         pass
 
 class MNISTDataset(Dataset):
-    def __init__(self, dataset, tokenizer="bytes", device="cuda"):
+    def __init__(self, dataset, tokenizer="bytes", device="cuda", pad_id=None):
         super().__init__()
         self.device = device
         self.tokenizer = tokenizer
@@ -96,7 +103,8 @@ class MNISTDataset(Dataset):
             
             if tokenizer == "rle":
                 encoded_bytes = RLE(image) 
-                encoded_bytes += [0] * (784 - len(encoded_bytes))
+                if pad_id is not None:
+                    encoded_bytes += [pad_id] * (784 - len(encoded_bytes))
                 image = np.array(encoded_bytes, dtype=np.uint8).copy()
             self.data.append(image)
 
@@ -135,8 +143,7 @@ class TextSamplerDataset(Dataset):
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
             token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
         elif self.tokenizer == "lz77":
-            bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
-            bytes = LZ77Compressor(255).compress(bytes)
+            bytes = fastlz.compress(re.sub(r'[^\x00-\x7F]+', ' ', text_slice))
             token_ids = np.frombuffer(bytes, dtype=np.uint8).copy()
         elif self.tokenizer == "gzip":
             bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
@@ -166,6 +173,14 @@ class TextSamplerDataset(Dataset):
                 [self.sep_id],
                 np.frombuffer(bytes, dtype=np.uint8).copy().astype(np.uint16),
             ])
+        elif self.tokenizer == "lz77-uncompression":
+            bytes = re.sub(r'[^\x00-\x7F]+', ' ', text_slice).encode("ascii")
+            encoded_bytes = fastlz.compress(bytes)
+            token_ids = np.concatenate([
+                np.frombuffer(encoded_bytes, dtype=np.uint8).copy().astype(np.uint16),
+                [self.sep_id],
+                np.frombuffer(bytes, dtype=np.uint8).copy().astype(np.uint16),
+            ])
         
         # if len(token_ids) < self.seq_len:
         #     return self[index]
@@ -178,21 +193,35 @@ class TextSamplerDataset(Dataset):
         return self.doc_lengths.sum() // self.seq_len
 
 class MixedDataset(Dataset):
-    def __init__(self, text_dataset, image_dataset, seq_len, pad_id):
+    def __init__(self, text_dataset, image_dataset, seq_len, pad_id, sample_many_images=True):
         super().__init__()
         self.text_dataset = text_dataset
         self.image_dataset = image_dataset
         self.seq_len = seq_len
         self.pad_id = pad_id
+        self.sample_many_images = sample_many_images
 
     def __len__(self):
         return len(self.text_dataset) + len(self.image_dataset)
 
     def __getitem__(self, index):
-        if np.random.rand() < 0.50:
+        if np.random.rand() < 0.5:
             seq = self.text_dataset[np.random.randint(len(self.text_dataset))]
         else:
-            seq = self.image_dataset[np.random.randint(len(self.image_dataset))]
+            if not self.sample_many_images:
+                seq = self.image_dataset[np.random.randint(len(self.image_dataset))]
+            else:
+                total_len = 0
+                seq_elems = []
+                while True:
+                    new_image = self.image_dataset[np.random.randint(len(self.image_dataset))]
+                    new_image = torch.concat([new_image, torch.LongTensor([self.pad_id]).to(new_image.device)])
+                    if total_len + len(new_image)> self.seq_len:
+                        break
+                    total_len += len(new_image)
+                    seq_elems.append(new_image)
+                seq = torch.concat(seq_elems + [torch.LongTensor([self.pad_id] * (self.seq_len - total_len)).to(new_image.device)])
+            
         if len(seq) < self.seq_len:
             seq = torch.cat([seq, torch.LongTensor([self.pad_id] * (self.seq_len - len(seq))).to(seq.device)])
         return seq
@@ -200,7 +229,7 @@ class MixedDataset(Dataset):
 if __name__ == "__main__":
     # config
     VALIDATE_EVERY = 100
-    GENERATE_EVERY = 500
+    GENERATE_EVERY = np.inf
     PRIME_LEN = 100
     config = OmegaConf.load(sys.argv[1])
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -213,7 +242,7 @@ if __name__ == "__main__":
     # instantiate GPT-like decoder model
 
     pad_id = config.num_tokens
-    sep_id = config.num_tokens - 1 if config.tokenizer == "gzip-uncompression" else None
+    sep_id = config.num_tokens - 1 if "uncompression" in config.tokenizer else None
     model = MEGABYTE(
         num_tokens = config.num_tokens + 1,
         dim = (768, 512, 256),
@@ -234,8 +263,8 @@ if __name__ == "__main__":
     if config.dataset == "mnist":
         dataset = load_dataset(config.dataset)
         print("Loading MNIST dataset")
-        train_dataset = MNISTDataset(dataset["train"], tokenizer=config.tokenizer, device=device)
-        val_dataset   = MNISTDataset(dataset["test"], tokenizer=config.tokenizer, device=device)
+        train_dataset = MNISTDataset(dataset["train"], tokenizer=config.tokenizer, device=device, pad_id=pad_id)
+        val_dataset   = MNISTDataset(dataset["test"], tokenizer=config.tokenizer, device=device, pad_id=pad_id)
         train_loader  = cycle(DataLoader(train_dataset, batch_size = config.batch_size, shuffle=True))
         val_loader    = cycle(DataLoader(val_dataset, batch_size = config.batch_size, shuffle=True))
     if config.dataset == "pg19-mnist":
@@ -244,13 +273,13 @@ if __name__ == "__main__":
         image_dataset = load_dataset("mnist")
         train_dataset = MixedDataset(
             TextSamplerDataset(text_dataset["train"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id),
-            MNISTDataset(image_dataset["train"], tokenizer=config.tokenizer, device=device),
+            MNISTDataset(image_dataset["train"], tokenizer=config.tokenizer, device=device, pad_id=None),
             config.seq_len,
             pad_id,
         )
         val_dataset   = MixedDataset(
             TextSamplerDataset(text_dataset["validation"], config.seq_len, tokenizer=config.tokenizer, zip_multiplier=config.zip_multiplier, device=device, pad_id=pad_id, sep_id=sep_id),
-            MNISTDataset(image_dataset["test"], tokenizer=config.tokenizer, device=device),
+            MNISTDataset(image_dataset["test"], tokenizer=config.tokenizer, device=device, pad_id=None),
             config.seq_len,
             pad_id,
         )

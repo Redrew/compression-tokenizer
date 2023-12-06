@@ -68,7 +68,7 @@ def decode_tokens(tokens, tokenizer="bytes"):
         return word_piece_tokenizer.decode(tokens)
     elif tokenizer == "rle":
         final_bytes = []
-        for i in range(0, len(tokens), 2):
+        for i in range(0, len(tokens) // 2 * 2, 2):
             final_bytes.extend([tokens[i]] * tokens[i+1])
         return ''.join(list(map(lambda token: str(chr(max(32, token))), final_bytes)))
     elif tokenizer == "mtf-rle":

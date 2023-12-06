@@ -10,7 +10,7 @@ from torch.utils.data import DataLoader
 from omegaconf import OmegaConf
 from tqdm import tqdm
 
-from train import TextSamplerDataset, decode_tokens, cycle, Logger
+from train import TextSamplerDataset, decode_tokens, cycle, Logger, MNISTDataset, MixedDataset
 
 config = OmegaConf.load(sys.argv[1])
 SKIP_PPL = False
@@ -26,11 +26,11 @@ sys.stdout = Logger(f"outputs/{config.exp_name}/evaluation-log.txt")
 # load and evaluate model
 model_path = f"outputs/{config.exp_name}/model-latest.pt"
 model = torch.load(model_path)
-dataset = load_dataset(config.dataset)
 pad_id = config.num_tokens
 sep_id = config.num_tokens - 1 if config.tokenizer == "gzip-uncompression" else None
 if not hasattr(model.module, "sep_id"):
     model.module.sep_id = None
+dataset = load_dataset("pg19")
 val_dataset = TextSamplerDataset(
     dataset["validation"],
     seq_len=config.seq_len,

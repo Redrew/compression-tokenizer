@@ -470,9 +470,10 @@ static FASTLZ_INLINE int FASTLZ_DECOMPRESSOR(const void* input, int length, void
         return 0;
 #endif
       // new
-      if (FASTLZ_UNEXPECT_CONDITIONAL(op + len + 3 > op_limit) || FASTLZ_UNEXPECT_CONDITIONAL(ref-1 < (flzuint8 *)output))
+      if (FASTLZ_UNEXPECT_CONDITIONAL(op + len + 3 > op_limit) || FASTLZ_UNEXPECT_CONDITIONAL(ref-1 < (flzuint8 *)output)) {
         printf("big %i %i \n", op + len + 3 - op_limit, ref-1 - (flzuint8 *)output);
-        return op - (flzuint8*)output;;
+        return op - (flzuint8*)output;
+      }
 
       if(FASTLZ_EXPECT_CONDITIONAL(ip < ip_limit))
         ctrl = *ip++;
